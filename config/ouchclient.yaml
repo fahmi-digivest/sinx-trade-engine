@@ -1,0 +1,28 @@
+app:
+  name: "Ouch Client"
+  desc: "Ouch Client IDX Exchange Order Gateway"
+  env: "development" #development, mock, staging, production
+  version: "1.0.0"
+  storage_path: "./storage_mme"
+
+
+tcp:
+  client:
+    ouch1:
+      run: true
+      host: 172.18.2.162
+      port: 8600
+      username: YJJOE1
+      password: P@ssw0rd!1
+      dial_timeout: 10s
+      reconnect_delay: 1s
+      keep_alive: 30s
+    ouch2:
+      run: true
+      host: 172.18.2.162
+      port: 8600
+      username: YJJOE1
+      password: P@ssw0rd!1
+      dial_timeout: 10s
+      reconnect_delay: 1s
+      keep_alive: 30s
