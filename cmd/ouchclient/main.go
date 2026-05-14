@@ -16,7 +16,7 @@ func main() {
 
 	app, err := bootstrap.NewOuchClientApp(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to initialize guse: %v\n", err)
+		fmt.Fprintf(os.Stderr, "failed to initialize ouch client: %v\n", err)
 		os.Exit(1)
 	}
 

@@ -1,0 +1,7 @@
+version: "3"
+
+tasks:
+  run-ouchclient:
+    desc: Run the OUCH client application
+    cmds:
+      - go run ./cmd/ouchclient

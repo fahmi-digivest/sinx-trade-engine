@@ -7,12 +7,13 @@ import (
 )
 
 type OuchClientApp struct {
-	ctx    context.Context
-	config *config.Config
+	ctx      context.Context
+	config   *config.Config
+	services []ServiceStartup
 }
 
 func NewOuchClientApp(ctx context.Context) (*OuchClientApp, error) {
-	cfg, err := config.Load("config/ouchclient.yaml")
+	cfg, err := config.Load("ouchclient.yaml")
 	if err != nil {
 		return nil, err
 	}
