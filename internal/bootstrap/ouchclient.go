@@ -8,7 +8,7 @@ import (
 	"strconv"
 
 	soupbinclient "github.com/fahmi-digivest/sinx-trade-engine/internal/delivery/tcp/soupbin/client"
-	soupbinhandler "github.com/fahmi-digivest/sinx-trade-engine/internal/delivery/tcp/soupbin/handler"
+	ouchHandler "github.com/fahmi-digivest/sinx-trade-engine/internal/delivery/tcp/soupbin/ouch/handler"
 	"github.com/fahmi-digivest/sinx-trade-engine/internal/infrastructure/config"
 	"github.com/fahmi-digivest/sinx-trade-engine/internal/infrastructure/logger"
 )
@@ -92,7 +92,7 @@ func (a *OuchClientApp) serviceInitialize() error {
 		if cfg.Run {
 			name := cfg.Name
 
-			handler := soupbinhandler.NewOuchClientHandler(
+			handler := ouchHandler.NewOuchClientHandler(
 				a.logger.With("component", "soupbin-handler", "client_name", name),
 				ouchLogger.With("component", "soupbin-handler", "client_name", name),
 			)
@@ -125,7 +125,7 @@ func (a *OuchClientApp) serviceInitialize() error {
 		if cfg.Run {
 			name := cfg.Name
 
-			handler := soupbinhandler.NewOuchClientHandler(
+			handler := ouchHandler.NewOuchClientHandler(
 				a.logger.With("component", "soupbin-handler", "client_name", name),
 				ouchLogger.With("component", "soupbin-handler", "client_name", name),
 			)
