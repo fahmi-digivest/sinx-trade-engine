@@ -5,10 +5,9 @@ app:
   version: "1.0.0"
   storage_path: "./storage_mme"
 
-
 tcp:
-  client:
-    ouch1:
+  clients:
+    - name: ouch client 1
       run: true
       host: 172.18.2.162
       port: 8600
@@ -17,7 +16,8 @@ tcp:
       dial_timeout: 10s
       reconnect_delay: 1s
       keep_alive: 30s
-    ouch2:
+
+    - name: ouch client 2
       run: true
       host: 172.18.2.162
       port: 8600
