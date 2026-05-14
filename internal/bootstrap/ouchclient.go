@@ -114,7 +114,6 @@ func (a *OuchClientApp) serviceInitialize() error {
 				clientCfg,
 				handler,
 				a.logger.With("component", "soupbin-client", "client_name", name),
-				ouchLogger.With("component", "soupbin-client", "client_name", name),
 			))
 		} else {
 			a.logger.Info("skip disabled ouch client", "name", cfg.Name)
@@ -148,7 +147,6 @@ func (a *OuchClientApp) serviceInitialize() error {
 				clientCfg,
 				handler,
 				a.logger.With("component", "soupbin-client", "client_name", name),
-				ouchLogger.With("component", "soupbin-client", "client_name", name),
 			))
 		} else {
 			a.logger.Info("skip disabled ouch client", "name", cfg.Name)

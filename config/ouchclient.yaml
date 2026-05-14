@@ -45,7 +45,7 @@ tcp:
       run: true
       host: 127.0.0.1
       port: 8600
-      username: YJJOE1
+      username: YJJOE2
       password: P@ssw0rd!1
       requested_sequence: ""
       heartbeat_interval: 1s

@@ -1,6 +1,10 @@
 package handler
 
-import "log/slog"
+import (
+	"log/slog"
+
+	"github.com/fahmi-digivest/sinx-trade-engine/internal/delivery/tcp/soupbin/message"
+)
 
 // OuchClientHandler logs SoupBin client events for OUCH client runtime services.
 type OuchClientHandler struct {
@@ -16,11 +20,19 @@ func NewOuchClientHandler(logger, ouchLogger *slog.Logger) *OuchClientHandler {
 }
 
 func (h *OuchClientHandler) OnLoginAccepted(session string, nextSeq uint64) {
-	h.logger.Info("login accepted", "session", session, "next_seq", nextSeq)
+	h.ouchLogger.Info("login accepted", "session", session, "next_seq", nextSeq)
 }
 
 func (h *OuchClientHandler) OnSequencedData(seq uint64, msg []byte) {
 	h.ouchLogger.Debug("sequenced data received", "seq", seq, "payload_len", len(msg))
+}
+
+func (h *OuchClientHandler) OnServerHeartbeat() {
+	h.ouchLogger.Debug("server heartbeat received")
+}
+
+func (h *OuchClientHandler) OnUnsequencedData(msg *message.UnsequencedData) {
+	h.ouchLogger.Debug("unsequenced data received", "payload_len", len(msg.Message))
 }
 
 func (h *OuchClientHandler) OnEndOfSession() {

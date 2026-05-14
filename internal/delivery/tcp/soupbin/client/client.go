@@ -23,7 +23,6 @@ type Client struct {
 	cfg     Config
 	handler Handler
 	logger  *slog.Logger
-	ouchLog *slog.Logger
 
 	mu        sync.Mutex
 	conn      net.Conn
@@ -39,12 +38,9 @@ type Client struct {
 }
 
 // New creates a new Client. Call Run with a context to start it.
-func New(name string, cfg Config, handler Handler, logger, ouchLog *slog.Logger) *Client {
+func New(name string, cfg Config, handler Handler, logger *slog.Logger) *Client {
 	if logger == nil {
 		logger = slog.Default()
-	}
-	if ouchLog == nil {
-		ouchLog = logger
 	}
 
 	return &Client{
@@ -52,31 +48,34 @@ func New(name string, cfg Config, handler Handler, logger, ouchLog *slog.Logger)
 		cfg:     cfg,
 		handler: handler,
 		logger:  logger,
-		ouchLog: ouchLog,
 		enc:     codec.NewEncoder(),
 		done:    make(chan struct{}),
 	}
 }
 
 // Name returns the service name for this client instance.
-func (c *Client) Name() string {
-	return c.name
-}
+func (c *Client) Name() string { return c.name }
+
+// Session returns the session ID established during login.
+func (c *Client) Session() string { return c.session }
+
+// NextSeq returns the next expected sequence number.
+func (c *Client) NextSeq() uint64 { return c.nextSeq }
 
 // Connect dials the server, performs the login handshake, and starts the
-// receive loop.  It blocks until the connection is established or returns an
-// error.  Call the blocking Run method to keep reading, or use Connect + Send
+// receive loop. It blocks until the connection is established or returns an
+// error. Call the blocking Run method to keep reading, or use Connect + Send
 // from separate goroutines.
 func (c *Client) Connect() error {
 	c.logger.Info("connecting soupbin client", "server_addr", c.cfg.ServerAddr)
 
 	requestedSession := c.cfg.RequestedSession
-	requestedSequenceNumber := c.cfg.RequestedSequenceNumber
+	requestedSeq := c.cfg.RequestedSequenceNumber
 	if c.session != "" {
 		requestedSession = c.session
 	}
 	if c.nextSeq > 0 {
-		requestedSequenceNumber = strconv.FormatUint(c.nextSeq, 10)
+		requestedSeq = strconv.FormatUint(c.nextSeq, 10)
 	}
 
 	conn, err := net.DialTimeout("tcp", c.cfg.ServerAddr, c.cfg.DialTimeout)
@@ -89,20 +88,12 @@ func (c *Client) Connect() error {
 	c.fw = frame.NewWriter(conn)
 	c.mu.Unlock()
 
-	// Send Login Request.
 	loginReq := &message.LoginRequest{
 		Username:                c.cfg.Username,
 		Password:                c.cfg.Password,
 		RequestedSession:        requestedSession,
-		RequestedSequenceNumber: requestedSequenceNumber,
+		RequestedSequenceNumber: requestedSeq,
 	}
-
-	c.ouchLog.Debug(
-		"sent login request",
-		"username", loginReq.Username,
-		"requested_session", loginReq.RequestedSession,
-		"requested_sequence", loginReq.RequestedSequenceNumber,
-	)
 
 	if err := c.sendMsg(loginReq); err != nil {
 		conn.Close()
@@ -110,17 +101,17 @@ func (c *Client) Connect() error {
 	}
 
 	// Read Login Accepted / Rejected.
-	conn.SetDeadline(time.Now().Add(c.cfg.DialTimeout))
+	conn.SetDeadline(time.Now().Add(c.cfg.DialTimeout)) //nolint:errcheck
 	fr := frame.NewReader(conn)
+
 	f, err := fr.ReadFrame()
 	if err != nil {
 		conn.Close()
 		return fmt.Errorf("soupbin/client: read login response: %w", err)
 	}
-	conn.SetDeadline(time.Time{})
+	conn.SetDeadline(time.Time{}) //nolint:errcheck
 
-	dec := codec.NewDecoder()
-	msg, err := dec.Decode(f)
+	msg, err := codec.NewDecoder().Decode(f)
 	if err != nil {
 		conn.Close()
 		return err
@@ -131,12 +122,12 @@ func (c *Client) Connect() error {
 		seq, _ := strconv.ParseUint(m.SequenceNumber, 10, 64)
 		c.nextSeq = seq
 		c.session = m.Session
-		c.logger.Info("soupbin login accepted", "session", m.Session, "next_seq", seq)
-		c.ouchLog.Info("soupbin login accepted", "session", m.Session, "next_seq", seq)
 		c.handler.OnLoginAccepted(m.Session, seq)
+
 	case *message.LoginRejected:
 		conn.Close()
 		return m // LoginRejected implements error
+
 	default:
 		conn.Close()
 		return fmt.Errorf("soupbin/client: unexpected packet type %T after login", msg)
@@ -145,12 +136,80 @@ func (c *Client) Connect() error {
 	return nil
 }
 
+// Run keeps the client alive until ctx is cancelled or the client fails fatally.
+func (c *Client) Run(ctx context.Context) error {
+	c.logger.Info("starting soupbin service")
+
+	go func() {
+		<-ctx.Done()
+		_ = c.Close()
+	}()
+
+	reconnectDelay := c.cfg.ReconnectDelay
+	if reconnectDelay <= 0 {
+		reconnectDelay = time.Second
+	}
+
+	for {
+		if err := c.Connect(); err != nil {
+			if !c.waitReconnect(ctx, reconnectDelay) {
+				return err
+			}
+			continue
+		}
+
+		err := c.runLoop()
+		if err == nil || errors.Is(err, context.Canceled) {
+			c.logger.Info("soupbin service stopped")
+			return err
+		}
+
+		if !isReconnectable(err) {
+			c.logger.Error("soupbin service stopped with error", "err", err)
+			return err
+		}
+
+		c.logger.Warn("soupbin client disconnected, reconnecting", "err", err, "delay", reconnectDelay)
+		_ = c.closeConnection(false)
+
+		if !c.waitReconnect(ctx, reconnectDelay) {
+			c.logger.Info("soupbin service stopped")
+			return nil
+		}
+	}
+}
+
+// RunWithContext is a compatibility alias for Run.
+func (c *Client) RunWithContext(ctx context.Context) error {
+	return c.Run(ctx)
+}
+
+// Send transmits an Unsequenced Data packet to the server.
+func (c *Client) Send(msg []byte) error {
+	return c.sendMsg(&message.UnsequencedData{Message: msg})
+}
+
+// Close sends a Logout Request and closes the underlying connection.
+func (c *Client) Close() error {
+	var closeErr error
+	c.closeOnce.Do(func() {
+		close(c.done)
+		closeErr = c.closeConnection(true)
+	})
+	return closeErr
+}
+
+// -----------------------------------------------------------------------------
+// Internal helpers
+// -----------------------------------------------------------------------------
+
 // runLoop starts the main receive loop and heartbeat ticker.
 // It blocks until the connection is closed or an error occurs.
 func (c *Client) runLoop() error {
 	c.mu.Lock()
 	conn := c.conn
 	c.mu.Unlock()
+
 	if conn == nil {
 		return fmt.Errorf("soupbin/client: not connected")
 	}
@@ -197,52 +256,43 @@ func (c *Client) runLoop() error {
 			return err
 
 		case <-hbTicker.C:
-			// Check server liveness.
 			if time.Since(lastRecv) > c.cfg.ServerTimeout {
 				err := fmt.Errorf("soupbin/client: server timeout (no data for %s)", c.cfg.ServerTimeout)
 				c.handler.OnError(err)
 				return err
 			}
-
-			// Send a heartbeat only when the client has been idle long enough.
 			if time.Since(c.getLastSend()) < c.cfg.HeartbeatInterval {
 				continue
 			}
-
 			if err := c.sendMsg(&message.ClientHeartbeat{}); err != nil {
 				c.handler.OnError(err)
 				return err
 			}
-
-			c.ouchLog.Debug("sent client heartbeat")
 		}
 	}
 }
 
-// Send transmits an Unsequenced Data packet to the server.
-func (c *Client) Send(msg []byte) error {
-	return c.sendMsg(&message.UnsequencedData{Message: msg})
+func (c *Client) dispatch(msg message.Message) {
+	switch m := msg.(type) {
+	case *message.SequencedData:
+		seq := c.nextSeq
+		c.nextSeq++
+		c.handler.OnSequencedData(seq, m.Message)
+
+	case *message.ServerHeartbeat:
+		if h, ok := c.handler.(ServerHeartbeatHandler); ok {
+			h.OnServerHeartbeat()
+		}
+
+	case *message.EndOfSession:
+		c.handler.OnEndOfSession()
+
+	case *message.UnsequencedData:
+		if h, ok := c.handler.(UnsequencedHandler); ok {
+			h.OnUnsequencedData(m)
+		}
+	}
 }
-
-// Close sends a Logout Request and closes the underlying connection.
-func (c *Client) Close() error {
-	var closeErr error
-
-	c.closeOnce.Do(func() {
-		close(c.done)
-		closeErr = c.closeConnection(true)
-	})
-
-	return closeErr
-}
-
-// Session returns the session ID established during login.
-func (c *Client) Session() string { return c.session }
-
-// NextSeq returns the next expected sequence number.
-func (c *Client) NextSeq() uint64 { return c.nextSeq }
-
-// ---- internal ---------------------------------------------------------------
 
 func (c *Client) sendMsg(msg message.Message) error {
 	f, err := c.enc.Encode(msg)
@@ -256,80 +306,8 @@ func (c *Client) sendMsg(msg message.Message) error {
 	if err := c.fw.WriteFrame(f); err != nil {
 		return err
 	}
-
 	c.lastSend = time.Now()
 	return nil
-}
-
-func (c *Client) dispatch(msg message.Message) {
-	switch m := msg.(type) {
-	case *message.SequencedData:
-		seq := c.nextSeq
-		c.nextSeq++
-		c.ouchLog.Debug("received sequenced data", "seq", seq, "payload_len", len(m.Message))
-		c.handler.OnSequencedData(seq, m.Message)
-
-	case *message.ServerHeartbeat:
-		c.ouchLog.Debug("received server heartbeat")
-
-	case *message.EndOfSession:
-		c.logger.Warn("received soupbin end of session", "session", c.session)
-		c.handler.OnEndOfSession()
-
-	case *message.UnsequencedData:
-		c.ouchLog.Debug("received unsequenced data", "payload_len", len(m.Message))
-		if h, ok := c.handler.(UnsequencedHandler); ok {
-			h.OnUnsequencedData(m)
-		}
-	}
-}
-
-// Run keeps the client alive until ctx is cancelled or the client fails fatally.
-func (c *Client) Run(ctx context.Context) error {
-	c.logger.Info("starting soupbin service")
-
-	go func() {
-		<-ctx.Done()
-		_ = c.Close()
-	}()
-
-	reconnectDelay := c.cfg.ReconnectDelay
-	if reconnectDelay <= 0 {
-		reconnectDelay = time.Second
-	}
-
-	for {
-		if err := c.Connect(); err != nil {
-			if !c.waitReconnect(ctx, reconnectDelay) {
-				return err
-			}
-			continue
-		}
-
-		err := c.runLoop()
-		if err == nil || errors.Is(err, context.Canceled) {
-			c.logger.Info("soupbin service stopped")
-			return err
-		}
-
-		if !isReconnectable(err) {
-			c.logger.Error("soupbin service stopped with error", "err", err)
-			return err
-		}
-
-		c.logger.Warn("soupbin client disconnected, reconnecting", "err", err, "delay", reconnectDelay)
-		_ = c.closeConnection(false)
-
-		if !c.waitReconnect(ctx, reconnectDelay) {
-			c.logger.Info("soupbin service stopped")
-			return nil
-		}
-	}
-}
-
-// RunWithContext is kept as a compatibility alias for Run.
-func (c *Client) RunWithContext(ctx context.Context) error {
-	return c.Run(ctx)
 }
 
 func (c *Client) closeConnection(sendLogout bool) error {
@@ -368,12 +346,12 @@ func (c *Client) waitReconnect(ctx context.Context, delay time.Duration) bool {
 	}
 }
 
-func isReconnectable(err error) bool {
-	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
-}
-
 func (c *Client) getLastSend() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.lastSend
+}
+
+func isReconnectable(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }

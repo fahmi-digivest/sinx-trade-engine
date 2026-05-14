@@ -19,6 +19,12 @@ type Handler interface {
 	OnError(err error)
 }
 
+// ServerHeartbeatHandler is an optional interface a Handler may implement
+// to receive server heartbeat notifications.
+type ServerHeartbeatHandler interface {
+	OnServerHeartbeat()
+}
+
 // UnsequencedHandler is an optional interface a Handler may also implement
 // to receive Unsequenced messages echoed back from the server.
 type UnsequencedHandler interface {

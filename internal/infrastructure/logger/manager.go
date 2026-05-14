@@ -85,7 +85,7 @@ func (m *Manager) build(name string, lc config.LoggerNamedConfig) (*slog.Logger,
 	if strings.ToLower(m.def.Format) == "json" {
 		handler = slog.NewJSONHandler(w, opts)
 	} else {
-		handler = slog.NewTextHandler(w, opts)
+		handler = newCompactTextHandler(w, opts)
 	}
 
 	// Attach logger name as a fixed attribute.
