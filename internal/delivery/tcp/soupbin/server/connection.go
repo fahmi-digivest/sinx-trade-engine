@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/fahmi-digivest/sinx-trade-engine/internal/delivery/tcp/soupbin/codec"
@@ -41,7 +42,11 @@ func NewConnection(conn net.Conn, cfg Config, auth *Authenticator, session *Sess
 // Serve handles the full lifecycle of the connection: login handshake, then
 // replaying buffered messages followed by live streaming.
 func (c *Connection) Serve() {
-	defer c.conn.Close()
+	var wg sync.WaitGroup
+	defer func() {
+		_ = c.conn.Close()
+		wg.Wait()
+	}()
 
 	addr := c.conn.RemoteAddr()
 
@@ -110,7 +115,9 @@ func (c *Connection) Serve() {
 	// Read from client in a separate goroutine so we can also send heartbeats.
 	clientMsgs := make(chan message.Message, 16)
 	clientErr := make(chan error, 1)
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for {
 			f, err := c.fr.ReadFrame()
 			if err != nil {

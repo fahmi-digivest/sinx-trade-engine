@@ -8,9 +8,11 @@ import (
 	"strconv"
 
 	soupbinclient "github.com/fahmi-digivest/sinx-trade-engine/internal/delivery/tcp/soupbin/client"
+	"github.com/fahmi-digivest/sinx-trade-engine/internal/delivery/tcp/soupbin/frame"
 	ouchHandler "github.com/fahmi-digivest/sinx-trade-engine/internal/delivery/tcp/soupbin/ouch/handler"
 	"github.com/fahmi-digivest/sinx-trade-engine/internal/infrastructure/config"
 	"github.com/fahmi-digivest/sinx-trade-engine/internal/infrastructure/logger"
+	infraqueue "github.com/fahmi-digivest/sinx-trade-engine/internal/infrastructure/queue"
 )
 
 type OuchClientApp struct {
@@ -109,11 +111,14 @@ func (a *OuchClientApp) serviceInitialize() error {
 				ReconnectDelay:          cfg.ReconnectDelay,
 			}
 
+			frameQueue := infraqueue.NewSPSC[*frame.Frame](1024)
+
 			services = append(services, soupbinclient.New(
 				name,
 				clientCfg,
 				handler,
 				a.logger.With("component", "soupbin-client", "client_name", name),
+				frameQueue,
 			))
 		} else {
 			a.logger.Info("skip disabled ouch client", "name", cfg.Name)
@@ -142,11 +147,14 @@ func (a *OuchClientApp) serviceInitialize() error {
 				ReconnectDelay:          cfg.ReconnectDelay,
 			}
 
+			frameQueue := infraqueue.NewSPSC[*frame.Frame](1024)
+
 			services = append(services, soupbinclient.New(
 				name,
 				clientCfg,
 				handler,
 				a.logger.With("component", "soupbin-client", "client_name", name),
+				frameQueue,
 			))
 		} else {
 			a.logger.Info("skip disabled ouch client", "name", cfg.Name)

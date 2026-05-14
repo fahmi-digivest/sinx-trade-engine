@@ -14,6 +14,7 @@ import (
 	"github.com/fahmi-digivest/sinx-trade-engine/internal/delivery/tcp/soupbin/codec"
 	"github.com/fahmi-digivest/sinx-trade-engine/internal/delivery/tcp/soupbin/frame"
 	"github.com/fahmi-digivest/sinx-trade-engine/internal/delivery/tcp/soupbin/message"
+	port "github.com/fahmi-digivest/sinx-trade-engine/internal/domain/port"
 )
 
 // Client connects to an upstream SoupBinTCP server, handles the login
@@ -23,6 +24,7 @@ type Client struct {
 	cfg     Config
 	handler Handler
 	logger  *slog.Logger
+	queue   port.SPSCQueue[*frame.Frame]
 
 	mu        sync.Mutex
 	conn      net.Conn
@@ -32,13 +34,14 @@ type Client struct {
 
 	nextSeq  uint64
 	session  string
+	lastRecv time.Time
 	lastSend time.Time
 
 	done chan struct{}
 }
 
 // New creates a new Client. Call Run with a context to start it.
-func New(name string, cfg Config, handler Handler, logger *slog.Logger) *Client {
+func New(name string, cfg Config, handler Handler, logger *slog.Logger, queue port.SPSCQueue[*frame.Frame]) *Client {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -48,6 +51,7 @@ func New(name string, cfg Config, handler Handler, logger *slog.Logger) *Client 
 		cfg:     cfg,
 		handler: handler,
 		logger:  logger,
+		queue:   queue,
 		enc:     codec.NewEncoder(),
 		done:    make(chan struct{}),
 	}
@@ -122,6 +126,7 @@ func (c *Client) Connect() error {
 		seq, _ := strconv.ParseUint(m.SequenceNumber, 10, 64)
 		c.nextSeq = seq
 		c.session = m.Session
+		c.setLastRecv(time.Now())
 		c.handler.OnLoginAccepted(m.Session, seq)
 
 	case *message.LoginRejected:
@@ -140,9 +145,29 @@ func (c *Client) Connect() error {
 func (c *Client) Run(ctx context.Context) error {
 	c.logger.Info("starting soupbin service")
 
+	var wg sync.WaitGroup
+	stopCtxWatcher := make(chan struct{})
+
+	wg.Add(1)
 	go func() {
-		<-ctx.Done()
-		_ = c.Close()
+		defer wg.Done()
+		c.consumeFrames()
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		select {
+		case <-ctx.Done():
+			_ = c.Close()
+		case <-stopCtxWatcher:
+		}
+	}()
+
+	defer func() {
+		close(stopCtxWatcher)
+		c.queue.Close()
+		wg.Wait()
 	}()
 
 	reconnectDelay := c.cfg.ReconnectDelay
@@ -215,26 +240,36 @@ func (c *Client) runLoop() error {
 	}
 
 	fr := frame.NewReader(conn)
-	dec := codec.NewDecoder()
 
 	hbTicker := time.NewTicker(c.cfg.HeartbeatInterval)
 	defer hbTicker.Stop()
 
-	frameCh := make(chan *frame.Frame, 64)
 	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
 
+	defer func() {
+		_ = c.closeConnection(false)
+		wg.Wait()
+	}()
+
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for {
 			f, err := fr.ReadFrame()
 			if err != nil {
 				errCh <- err
 				return
 			}
-			frameCh <- f
+			c.setLastRecv(time.Now())
+			if err := c.queue.Enqueue(f); err != nil {
+				errCh <- err
+				return
+			}
 		}
 	}()
 
-	lastRecv := time.Now()
+	c.setLastRecv(time.Now())
 
 	for {
 		select {
@@ -242,21 +277,12 @@ func (c *Client) runLoop() error {
 			c.logger.Info("soupbin client loop stopped")
 			return nil
 
-		case f := <-frameCh:
-			lastRecv = time.Now()
-			msg, err := dec.Decode(f)
-			if err != nil {
-				c.logger.Error("soupbin decode error", "err", err)
-				continue
-			}
-			c.dispatch(msg)
-
 		case err := <-errCh:
 			c.handler.OnError(err)
 			return err
 
 		case <-hbTicker.C:
-			if time.Since(lastRecv) > c.cfg.ServerTimeout {
+			if time.Since(c.getLastRecv()) > c.cfg.ServerTimeout {
 				err := fmt.Errorf("soupbin/client: server timeout (no data for %s)", c.cfg.ServerTimeout)
 				c.handler.OnError(err)
 				return err
@@ -269,6 +295,26 @@ func (c *Client) runLoop() error {
 				return err
 			}
 		}
+	}
+}
+
+func (c *Client) consumeFrames() {
+	dec := codec.NewDecoder()
+
+	for {
+		f, err := c.queue.Dequeue()
+		if err != nil {
+			return
+		}
+
+		msg, err := dec.Decode(f)
+		if err != nil {
+			c.logger.Error("soupbin decode error", "err", err)
+			c.handler.OnError(err)
+			continue
+		}
+
+		c.dispatch(msg)
 	}
 }
 
@@ -350,6 +396,18 @@ func (c *Client) getLastSend() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.lastSend
+}
+
+func (c *Client) getLastRecv() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastRecv
+}
+
+func (c *Client) setLastRecv(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lastRecv = t
 }
 
 func isReconnectable(err error) bool {
