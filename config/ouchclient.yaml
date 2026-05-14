@@ -21,7 +21,7 @@ logger:
       enabled: true
       filename: ouch_message #ouch_message_2026-05-15.log
       output: [stdout]
-      level: debug
+      level: info
     itch:
       enabled: true
       filename: itch_message #ouch_message_2026-05-15.log
