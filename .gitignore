@@ -1,0 +1,22 @@
+# Runtime artifacts
+storage_mme/
+
+# Go build outputs
+bin/
+dist/
+build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+cover.out
+*.coverprofile
+
+# Editor / OS files
+.DS_Store
+.idea/
+.vscode/

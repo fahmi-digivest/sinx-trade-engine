@@ -4,7 +4,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
+	"strconv"
 
+	soupbinclient "github.com/fahmi-digivest/sinx-trade-engine/internal/delivery/tcp/soupbin/client"
+	soupbinhandler "github.com/fahmi-digivest/sinx-trade-engine/internal/delivery/tcp/soupbin/handler"
 	"github.com/fahmi-digivest/sinx-trade-engine/internal/infrastructure/config"
 	"github.com/fahmi-digivest/sinx-trade-engine/internal/infrastructure/logger"
 )
@@ -37,6 +41,11 @@ func NewOuchClientApp(ctx context.Context) (*OuchClientApp, error) {
 		loggers: loggers,
 		logger:  serviceLogger,
 	}
+
+	if err := app.serviceInitialize(); err != nil {
+		return nil, err
+	}
+
 	return app, nil
 }
 
@@ -57,10 +66,122 @@ func (a *OuchClientApp) Start() error {
 		)
 	}()
 
-	<-a.ctx.Done()
-	if err := a.ctx.Err(); err != nil && !errors.Is(err, context.Canceled) {
+	if len(a.services) == 0 {
+		a.logger.Warn("no ouch client services enabled")
+		<-a.ctx.Done()
+		if err := a.ctx.Err(); err != nil && !errors.Is(err, context.Canceled) {
+			return err
+		}
+		return nil
+	}
+
+	manager := NewServiceManager(a.logger, a.services...)
+	if err := manager.Run(a.ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 
+	return nil
+}
+
+func (a *OuchClientApp) serviceInitialize() error {
+	ouchLogger := a.loggers.Get("ouch")
+	services := make([]ServiceStartup, 0, 2)
+
+	if len(a.config.TCP.Clients) > 0 {
+		cfg := a.config.TCP.Clients[0]
+		if cfg.Run {
+			name := cfg.Name
+
+			handler := soupbinhandler.NewOuchClientHandler(
+				a.logger.With("component", "soupbin-handler", "client_name", name),
+				ouchLogger.With("component", "soupbin-handler", "client_name", name),
+			)
+
+			clientCfg := soupbinclient.Config{
+				ServerAddr:              net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
+				Username:                cfg.Username,
+				Password:                cfg.Password,
+				RequestedSession:        cfg.RequestedSession,
+				RequestedSequenceNumber: cfg.RequestedSequence,
+				HeartbeatInterval:       cfg.HeartbeatInterval,
+				ServerTimeout:           cfg.HeartbeatInterval * 15,
+				DialTimeout:             cfg.DialTimeout,
+			}
+
+			services = append(services, &soupBinClientService{
+				name: name,
+				client: soupbinclient.New(
+					clientCfg,
+					handler,
+					a.logger.With("component", "soupbin-client", "client_name", name),
+					ouchLogger.With("component", "soupbin-client", "client_name", name),
+				),
+				logger: a.logger.With("service", name),
+			})
+		} else {
+			a.logger.Info("skip disabled ouch client", "name", cfg.Name)
+		}
+	}
+
+	if len(a.config.TCP.Clients) > 1 {
+		cfg := a.config.TCP.Clients[1]
+		if cfg.Run {
+			name := cfg.Name
+
+			handler := soupbinhandler.NewOuchClientHandler(
+				a.logger.With("component", "soupbin-handler", "client_name", name),
+				ouchLogger.With("component", "soupbin-handler", "client_name", name),
+			)
+
+			clientCfg := soupbinclient.Config{
+				ServerAddr:              net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
+				Username:                cfg.Username,
+				Password:                cfg.Password,
+				RequestedSession:        cfg.RequestedSession,
+				RequestedSequenceNumber: cfg.RequestedSequence,
+				HeartbeatInterval:       cfg.HeartbeatInterval,
+				ServerTimeout:           cfg.HeartbeatInterval * 15,
+				DialTimeout:             cfg.DialTimeout,
+			}
+
+			services = append(services, &soupBinClientService{
+				name: name,
+				client: soupbinclient.New(
+					clientCfg,
+					handler,
+					a.logger.With("component", "soupbin-client", "client_name", name),
+					ouchLogger.With("component", "soupbin-client", "client_name", name),
+				),
+				logger: a.logger.With("service", name),
+			})
+		} else {
+			a.logger.Info("skip disabled ouch client", "name", cfg.Name)
+		}
+	}
+
+	a.services = services
+	return nil
+}
+
+type soupBinClientService struct {
+	name   string
+	client *soupbinclient.Client
+	logger *slog.Logger
+}
+
+func (s *soupBinClientService) Name() string {
+	return s.name
+}
+
+func (s *soupBinClientService) Run(ctx context.Context) error {
+	s.logger.Info("starting soupbin service")
+
+	err := s.client.RunWithContext(ctx)
+	if err != nil && !errors.Is(err, context.Canceled) {
+		s.logger.Error("soupbin service stopped with error", "err", err)
+		return err
+	}
+
+	s.logger.Info("soupbin service stopped")
 	return nil
 }
