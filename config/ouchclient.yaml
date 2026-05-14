@@ -13,7 +13,6 @@ tcp:
       port: 8600
       username: YJJOE1
       password: P@ssw0rd!1
-      requested_session: ""
       requested_sequence: ""
       heartbeat_interval: 1s
       dial_timeout: 10s
@@ -25,7 +24,6 @@ tcp:
       port: 8600
       username: YJJOE1
       password: P@ssw0rd!1
-      requested_session: ""
       requested_sequence: ""
       heartbeat_interval: 1s
       dial_timeout: 10s
