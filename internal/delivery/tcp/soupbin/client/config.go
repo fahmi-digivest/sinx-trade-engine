@@ -29,6 +29,9 @@ type Config struct {
 
 	// DialTimeout is the timeout for the initial TCP connection.
 	DialTimeout time.Duration
+
+	// ReconnectDelay is the wait before retrying a reconnect after a recoverable disconnect.
+	ReconnectDelay time.Duration
 }
 
 // DefaultConfig returns a Config with spec-recommended defaults.
@@ -41,5 +44,6 @@ func DefaultConfig(addr, username, password string) Config {
 		HeartbeatInterval:       time.Second,
 		ServerTimeout:           15 * time.Second,
 		DialTimeout:             10 * time.Second,
+		ReconnectDelay:          time.Second,
 	}
 }

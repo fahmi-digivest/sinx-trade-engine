@@ -26,7 +26,7 @@ func (m *LoginRequest) Encode() ([]byte, error) {
 	if err := writeAlpha(buf[16:26], m.RequestedSession); err != nil {
 		return nil, fmt.Errorf("login_request session: %w", err)
 	}
-	if err := writeNumericASCII(buf[26:46], m.RequestedSequenceNumber); err != nil {
+	if err := writeNumericASCIILeft(buf[26:46], m.RequestedSequenceNumber); err != nil {
 		return nil, fmt.Errorf("login_request seq: %w", err)
 	}
 	return buf, nil

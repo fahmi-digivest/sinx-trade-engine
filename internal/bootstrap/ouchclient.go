@@ -106,18 +106,16 @@ func (a *OuchClientApp) serviceInitialize() error {
 				HeartbeatInterval:       cfg.HeartbeatInterval,
 				ServerTimeout:           cfg.HeartbeatInterval * 15,
 				DialTimeout:             cfg.DialTimeout,
+				ReconnectDelay:          cfg.ReconnectDelay,
 			}
 
-			services = append(services, &soupBinClientService{
-				name: name,
-				client: soupbinclient.New(
-					clientCfg,
-					handler,
-					a.logger.With("component", "soupbin-client", "client_name", name),
-					ouchLogger.With("component", "soupbin-client", "client_name", name),
-				),
-				logger: a.logger.With("service", name),
-			})
+			services = append(services, soupbinclient.New(
+				name,
+				clientCfg,
+				handler,
+				a.logger.With("component", "soupbin-client", "client_name", name),
+				ouchLogger.With("component", "soupbin-client", "client_name", name),
+			))
 		} else {
 			a.logger.Info("skip disabled ouch client", "name", cfg.Name)
 		}
@@ -142,46 +140,21 @@ func (a *OuchClientApp) serviceInitialize() error {
 				HeartbeatInterval:       cfg.HeartbeatInterval,
 				ServerTimeout:           cfg.HeartbeatInterval * 15,
 				DialTimeout:             cfg.DialTimeout,
+				ReconnectDelay:          cfg.ReconnectDelay,
 			}
 
-			services = append(services, &soupBinClientService{
-				name: name,
-				client: soupbinclient.New(
-					clientCfg,
-					handler,
-					a.logger.With("component", "soupbin-client", "client_name", name),
-					ouchLogger.With("component", "soupbin-client", "client_name", name),
-				),
-				logger: a.logger.With("service", name),
-			})
+			services = append(services, soupbinclient.New(
+				name,
+				clientCfg,
+				handler,
+				a.logger.With("component", "soupbin-client", "client_name", name),
+				ouchLogger.With("component", "soupbin-client", "client_name", name),
+			))
 		} else {
 			a.logger.Info("skip disabled ouch client", "name", cfg.Name)
 		}
 	}
 
 	a.services = services
-	return nil
-}
-
-type soupBinClientService struct {
-	name   string
-	client *soupbinclient.Client
-	logger *slog.Logger
-}
-
-func (s *soupBinClientService) Name() string {
-	return s.name
-}
-
-func (s *soupBinClientService) Run(ctx context.Context) error {
-	s.logger.Info("starting soupbin service")
-
-	err := s.client.RunWithContext(ctx)
-	if err != nil && !errors.Is(err, context.Canceled) {
-		s.logger.Error("soupbin service stopped with error", "err", err)
-		return err
-	}
-
-	s.logger.Info("soupbin service stopped")
 	return nil
 }
