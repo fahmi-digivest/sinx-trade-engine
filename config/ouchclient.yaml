@@ -13,16 +13,21 @@ tcp:
       port: 8600
       username: YJJOE1
       password: P@ssw0rd!1
+      requested_session: ""
+      requested_sequence: ""
+      heartbeat_interval: 1s
       dial_timeout: 10s
       reconnect_delay: 1s
       keep_alive: 30s
-
     - name: ouch client 2
       run: true
       host: 172.18.2.162
       port: 8600
       username: YJJOE1
       password: P@ssw0rd!1
+      requested_session: ""
+      requested_sequence: ""
+      heartbeat_interval: 1s
       dial_timeout: 10s
       reconnect_delay: 1s
       keep_alive: 30s
