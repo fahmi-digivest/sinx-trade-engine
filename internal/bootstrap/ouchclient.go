@@ -1,14 +1,25 @@
 package bootstrap
 
-import "context"
+import (
+	"context"
+
+	"github.com/fahmi-digivest/sinx-trade-engine/internal/infrastructure/config"
+)
 
 type OuchClientApp struct {
-	ctx context.Context
+	ctx    context.Context
+	config *config.Config
 }
 
 func NewOuchClientApp(ctx context.Context) (*OuchClientApp, error) {
+	cfg, err := config.Load("config/ouchclient.yaml")
+	if err != nil {
+		return nil, err
+	}
+
 	app := &OuchClientApp{
-		ctx: ctx,
+		ctx:    ctx,
+		config: cfg,
 	}
 	return app, nil
 }

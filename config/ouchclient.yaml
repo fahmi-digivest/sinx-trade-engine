@@ -5,6 +5,29 @@ app:
   version: "1.0.0"
   storage_path: "./storage_mme"
 
+logger:
+  default:
+    level: info
+    output: stdout
+    format: text
+    dir: ./storage_mme/logs
+  logs:
+    service:
+      enabled: true
+      filename: sinx_gate_service #sinx_gate_service_2026-05-15.log
+      output: [stdout, file]
+      level: debug
+    ouch:
+      enabled: true
+      filename: ouch_message #ouch_message_2026-05-15.log
+      output: [stdout]
+      level: debug
+    itch:
+      enabled: true
+      filename: itch_message #ouch_message_2026-05-15.log
+      output: [stdout]
+      level: debug
+
 tcp:
   clients:
     - name: ouch client 1
