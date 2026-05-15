@@ -78,7 +78,9 @@ func (c *Client) Connect() error {
 	if c.session != "" {
 		requestedSession = c.session
 	}
-	if c.nextSeq > 0 {
+	if c.nextSeq == 0 || requestedSeq == "1" {
+		requestedSeq = "1"
+	} else {
 		requestedSeq = strconv.FormatUint(c.nextSeq, 10)
 	}
 
