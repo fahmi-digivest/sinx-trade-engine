@@ -20,11 +20,12 @@ import (
 // Client connects to an upstream SoupBinTCP server, handles the login
 // handshake, and delivers messages to a Handler.
 type Client struct {
-	name    string
-	cfg     Config
-	handler Handler
-	logger  *slog.Logger
-	queue   port.SPSCQueue[*frame.Frame]
+	name       string
+	cfg        Config
+	handler    Handler
+	logger     *slog.Logger
+	readQueue  port.SPSCQueue[*frame.Frame]
+	writeQueue port.SPSCQueue[message.Message]
 
 	mu        sync.Mutex
 	conn      net.Conn
@@ -41,19 +42,27 @@ type Client struct {
 }
 
 // New creates a new Client. Call Run with a context to start it.
-func New(name string, cfg Config, handler Handler, logger *slog.Logger, queue port.SPSCQueue[*frame.Frame]) *Client {
+func New(
+	name string,
+	cfg Config,
+	handler Handler,
+	logger *slog.Logger,
+	readQueue port.SPSCQueue[*frame.Frame],
+	writeQueue port.SPSCQueue[message.Message],
+) *Client {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	return &Client{
-		name:    name,
-		cfg:     cfg,
-		handler: handler,
-		logger:  logger,
-		queue:   queue,
-		enc:     codec.NewEncoder(),
-		done:    make(chan struct{}),
+		name:       name,
+		cfg:        cfg,
+		handler:    handler,
+		logger:     logger,
+		readQueue:  readQueue,
+		writeQueue: writeQueue,
+		enc:        codec.NewEncoder(),
+		done:       make(chan struct{}),
 	}
 }
 
@@ -159,6 +168,12 @@ func (c *Client) Run(ctx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		c.consumeWrites(ctx)
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 		select {
 		case <-ctx.Done():
 			_ = c.Close()
@@ -168,7 +183,8 @@ func (c *Client) Run(ctx context.Context) error {
 
 	defer func() {
 		close(stopCtxWatcher)
-		c.queue.Close()
+		c.readQueue.Close()
+		c.writeQueue.Close()
 		wg.Wait()
 	}()
 
@@ -213,7 +229,7 @@ func (c *Client) RunWithContext(ctx context.Context) error {
 
 // Send transmits an Unsequenced Data packet to the server.
 func (c *Client) Send(msg []byte) error {
-	return c.sendMsg(&message.UnsequencedData{Message: msg})
+	return c.writeQueue.Enqueue(&message.UnsequencedData{Message: msg})
 }
 
 // Close sends a Logout Request and closes the underlying connection.
@@ -264,7 +280,7 @@ func (c *Client) runLoop() error {
 				return
 			}
 			c.setLastRecv(time.Now())
-			if err := c.queue.Enqueue(f); err != nil {
+			if err := c.readQueue.Enqueue(f); err != nil {
 				errCh <- err
 				return
 			}
@@ -304,7 +320,7 @@ func (c *Client) consumeFrames() {
 	dec := codec.NewDecoder()
 
 	for {
-		f, err := c.queue.Dequeue()
+		f, err := c.readQueue.Dequeue()
 		if err != nil {
 			return
 		}
@@ -317,6 +333,33 @@ func (c *Client) consumeFrames() {
 		}
 
 		c.dispatch(msg)
+	}
+}
+
+func (c *Client) consumeWrites(ctx context.Context) {
+	for {
+		msg, err := c.writeQueue.Dequeue()
+		if err != nil {
+			return
+		}
+
+		for {
+			if err := c.writeMsg(msg); err == nil {
+				break
+			} else if errors.Is(err, errClientNotConnected) || errors.Is(err, net.ErrClosed) {
+				select {
+				case <-c.done:
+					return
+				case <-ctx.Done():
+					return
+				case <-time.After(100 * time.Millisecond):
+				}
+				continue
+			} else {
+				c.handler.OnError(err)
+				break
+			}
+		}
 	}
 }
 
@@ -343,6 +386,10 @@ func (c *Client) dispatch(msg message.Message) {
 }
 
 func (c *Client) sendMsg(msg message.Message) error {
+	return c.writeMsg(msg)
+}
+
+func (c *Client) writeMsg(msg message.Message) error {
 	f, err := c.enc.Encode(msg)
 	if err != nil {
 		return err
@@ -350,6 +397,10 @@ func (c *Client) sendMsg(msg message.Message) error {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if c.fw == nil {
+		return errClientNotConnected
+	}
 
 	if err := c.fw.WriteFrame(f); err != nil {
 		return err
@@ -415,3 +466,5 @@ func (c *Client) setLastRecv(t time.Time) {
 func isReconnectable(err error) bool {
 	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
+
+var errClientNotConnected = errors.New("soupbin/client: not connected")

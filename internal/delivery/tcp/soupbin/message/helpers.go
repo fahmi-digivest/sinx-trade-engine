@@ -35,11 +35,6 @@ func writeAlphaLeft(buf []byte, s string) error {
 	return nil
 }
 
-// writeNumericASCII writes a numeric ASCII string right-padded with spaces into buf.
-func writeNumericASCII(buf []byte, s string) error {
-	return writeAlpha(buf, s)
-}
-
 // writeNumericASCIILeft writes a numeric ASCII string left-padded with spaces into buf.
 func writeNumericASCIILeft(buf []byte, s string) error {
 	return writeAlphaLeft(buf, s)
